@@ -1,0 +1,425 @@
+openapi: 3.0.3
+info:
+  title: Viva.com Local Terminal API
+  description: >-
+    Peer-to-peer (P2P) communication between ECR systems and EFT POS card
+    terminals on the same local network. The client addresses the terminal's own
+    IP address and port over HTTPS. In a closed network environment,
+    authentication is NOT required — no Authorization header is sent.
+  version: "1.0.0"
+servers:
+  - url: https://{terminalIp}:{port}
+    description: The EFT POS terminal on the local network (P2P)
+    variables:
+      terminalIp:
+        default: 192.168.1.50
+        description: The terminal's LAN IP address
+      port:
+        default: "8080"
+        description: The terminal's HTTPS port
+# No security schemes: authentication is not required on a closed P2P network.
+security: []
+tags:
+  - name: Transactions
+    description: Sale, refund, pre-auth completion, abort, AADE FIM, retrieval
+  - name: Sessions
+    description: Retrieve a session's outcome by id
+  - name: Configurations
+    description: Device screen and brightness control
+paths:
+  /pos/v1/sale:
+    post:
+      tags: [Transactions]
+      summary: Initiate a sales request
+      description: >-
+        Starts a sale for a given amount on the targeted device. Returns
+        immediately with a state (typically PROCESSING) and a sessionId. ISV
+        callers use the trailing-slash variant `/pos/v1/sale/` and may include
+        the `isvDetails` object.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaleRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionAck'
+        '400':
+          $ref: '#/components/responses/PlainTextError'
+  /pos/v1/preauth-completion:
+    post:
+      tags: [Transactions]
+      summary: Capture pre-auth request
+      description: Captures (completes) a previously pre-authorized sale.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PreauthCompletionRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionAck'
+        '400':
+          $ref: '#/components/responses/PlainTextError'
+  /pos/v1/refund:
+    post:
+      tags: [Transactions]
+      summary: Refund a transaction
+      description: Starts a refund/cancel process for the given transactionId.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefundRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionAck'
+        '400':
+          $ref: '#/components/responses/PlainTextError'
+  /pos/v1/unreferenced-refund:
+    post:
+      tags: [Transactions]
+      summary: Unreferenced refund
+      description: A refund not linked to an original transaction or order.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnreferencedRefundRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionAck'
+        '400':
+          $ref: '#/components/responses/PlainTextError'
+  /pos/v1/abort:
+    post:
+      tags: [Transactions]
+      summary: Abort a transaction
+      description: Aborts the in-progress SALE session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sessionId]
+              properties:
+                sessionId:
+                  type: string
+                  description: Transaction session identification
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionAck'
+        '400':
+          $ref: '#/components/responses/PlainTextError'
+  /pos/v1/aade-fim-control:
+    post:
+      tags: [Transactions]
+      summary: Create AADE FIM control action
+      description: >-
+        Creates the Echo Message (to fetch the Master Key) and the Control
+        Message (to create the Session Key) for Greek AADE fiscalisation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token:
+                  type: string
+                  description: The FIMAS control token including the AADE token.
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+        '400':
+          description: Bad Request
+  /pos/v1/transactions:
+    get:
+      tags: [Transactions]
+      summary: Retrieve transactions
+      description: Historical transactions with filtering by date, type, status, etc.
+      parameters:
+        - { name: cardNumber, in: query, required: false, schema: { type: string } }
+        - { name: orderCode, in: query, required: false, schema: { type: string } }
+        - name: transactionTypes
+          in: query
+          required: false
+          schema:
+            type: array
+            items: { type: integer }
+          style: form
+          explode: true
+        - { name: transactionStatus, in: query, required: false, schema: { type: string } }
+        - { name: startDate, in: query, required: false, schema: { type: string, format: date-time } }
+        - { name: endDate, in: query, required: false, schema: { type: string, format: date-time } }
+        - { name: isAadeAutonomouslyOnly, in: query, required: false, schema: { type: string } }
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  isSuccess:
+                    type: boolean
+                  transactions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TransactionSummary'
+        '400':
+          $ref: '#/components/responses/PlainTextError'
+  /pos/v1/sessions/{sessionId}:
+    get:
+      tags: [Sessions]
+      summary: Retrieve session by id
+      description: >-
+        Returns the session's full details. `payloadData` is present only once
+        the transaction has completed (state SUCCESS or FAILURE).
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionDetails'
+        '400':
+          $ref: '#/components/responses/PlainTextError'
+  /pos/v1/awake-lock:
+    post:
+      tags: [Configurations]
+      summary: Screen control
+      description: Controls how the device manages sleep mode and screen activity.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [wakeUpLock]
+              properties:
+                wakeUpLock:
+                  type: boolean
+                  description: >-
+                    If true, the device wakes from sleep and the screen stays
+                    active until the user unlocks it.
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IsSuccess'
+        '400':
+          description: Bad Request
+  /pos/v1/brightness:
+    post:
+      tags: [Configurations]
+      summary: Brightness configuration
+      description: Adjusts the brightness of the Viva terminal app.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [brightness]
+              properties:
+                brightness:
+                  type: number
+                  format: float
+                  description: Value in (0, 1]; 1.00 is maximum brightness. 0 is not allowed.
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IsSuccess'
+        '400':
+          description: Bad Request
+components:
+  responses:
+    PlainTextError:
+      description: Bad Request — the body is a plain string error message.
+      content:
+        text/plain:
+          schema:
+            type: string
+            example: ZeroconfException error message Amount cannot be null
+  schemas:
+    IsSuccess:
+      type: object
+      properties:
+        isSuccess:
+          type: boolean
+    SessionAck:
+      type: object
+      properties:
+        state:
+          type: string
+          enum: [PROCESSING, BUSY_ERROR, SERVER_ERROR, SESSION_NOT_FOUND_ERROR]
+        sessionType:
+          type: string
+          enum: [SALE, CANCEL, UNREFERENCED_REFUND, ABORT]
+        sessionId:
+          type: string
+    SaleRequest:
+      type: object
+      required: [sessionId, amount]
+      properties:
+        sessionId: { type: string, format: uuid }
+        amount: { type: integer, format: int64, description: Amount in cents }
+        merchantReference: { type: string }
+        customerTrns: { type: string }
+        preauth: { type: boolean }
+        tipAmount: { type: integer, format: int32 }
+        paymentMethod: { type: string, enum: [CardPresent, Iris] }
+        showTransactionResult: { type: boolean }
+        showReceipt: { type: boolean }
+        currencyCode: { type: integer, description: ISO 4217 numeric }
+        skipSurcharge: { type: boolean }
+        saleToAcquirerData: { type: string }
+        maxInstalments: { type: integer, format: int32 }
+        aadeProviderId: { type: string }
+        aadeProviderSignatureData: { type: string }
+        aadeProviderSignature: { type: string }
+        aadePreloaded: { type: boolean }
+        aadePreloadedDuration: { type: integer, format: int32 }
+        fiscalisationData: { type: object }
+        isvDetails:
+          type: object
+          description: ISV-only — partner credentials, fee and multi-merchant routing.
+          properties:
+            clientId: { type: string }
+            clientSecret: { type: string }
+            amount: { type: integer }
+            merchantId: { type: string }
+            merchantSourceCode: { type: string }
+            sourceCode: { type: string }
+    PreauthCompletionRequest:
+      type: object
+      required: [sessionId, amount, transactionId]
+      properties:
+        sessionId: { type: string, format: uuid }
+        amount: { type: integer, format: int64 }
+        transactionId: { type: string }
+        merchantReference: { type: string }
+        customerTrns: { type: string }
+        currencyCode: { type: integer }
+        saleToAcquirerData: { type: string }
+        aadeProviderId: { type: string }
+        aadeProviderSignatureData: { type: string }
+        aadeProviderSignature: { type: string }
+        aadePreloaded: { type: boolean }
+        aadePreloadedDuration: { type: integer, format: int32 }
+    RefundRequest:
+      type: object
+      required: [sessionId, amount, transactionId]
+      properties:
+        sessionId: { type: string }
+        amount: { type: integer, format: int64 }
+        transactionId: { type: string }
+        orderCode: { type: integer, format: int64 }
+        shortOrderCode: { type: integer, format: int64 }
+        merchantReference: { type: string }
+        customerTrns: { type: string }
+        currencyCode: { type: integer }
+        showTransactionResult: { type: boolean }
+        showReceipt: { type: boolean }
+        txnDateFrom: { type: string, format: date-time }
+        txnDateTo: { type: string, format: date-time }
+        aadeProviderId: { type: string }
+        aadeProviderSignatureData: { type: string }
+        aadeProviderSignature: { type: string }
+    UnreferencedRefundRequest:
+      type: object
+      required: [sessionId, amount]
+      properties:
+        sessionId: { type: string }
+        amount: { type: integer, format: int64 }
+        merchantReference: { type: string }
+        customerTrns: { type: string }
+        showTransactionResult: { type: boolean }
+        showReceipt: { type: boolean }
+        aadeProviderId: { type: string }
+        aadeProviderSignatureData: { type: string }
+        aadeProviderSignature: { type: string }
+        fiscalisationData: { type: object }
+    TransactionSummary:
+      type: object
+      properties:
+        transactionId: { type: string }
+        tid: { type: string }
+        retrievalReferenceNumber: { type: integer, format: int32 }
+        transactionDate: { type: string, format: date-time }
+        authorizationId: { type: string }
+        panEntryMode: { type: string }
+        tipAmount: { type: number }
+        amount: { type: number }
+        primaryAccountNumberMasked: { type: string }
+        referenceNumber: { type: integer }
+        bankId: { type: string }
+        orderCode: { type: string }
+        installments: { type: integer }
+        eventId: { type: integer, format: int32 }
+        isSuccess: { type: boolean }
+        transactionTypeId: { type: integer, format: int32, description: '5=sale, 4=refund, 7=reversal' }
+        merchantApproved: { type: boolean }
+    SessionDetails:
+      type: object
+      properties:
+        state:
+          type: string
+          enum: [SUCCESS, FAILURE, PROCESSING]
+        sessionType:
+          type: string
+          enum: [SALE, CAPTURE_PREAUTH, CANCEL, UNREFERENCED_REFUND, ABORT]
+        sessionId:
+          type: string
+        payloadData:
+          type: object
+          description: >-
+            Operation result. Depends on sessionType — SALE returns saleResponse,
+            CANCEL returns cancelResponse, UNREFERENCED_REFUND returns
+            unreferencedRefundResponse.
