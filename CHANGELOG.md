@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Changed
+- Dependencies: `guzzlehttp/guzzle` constraint widened to `^7.8 || ^8.0` (tested on 8.2),
+  `phpunit/phpunit` to `^11.0 || ^12.0 || ^13.0` (tested on 13.4; Composer keeps PHPUnit 11
+  on PHP 8.2). The `php` requirement is unchanged.
+
+
 ## [1.0.0] - 2026-06-06
 
 ### Added
